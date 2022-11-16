@@ -213,7 +213,7 @@ namespace LibDmd.Output.ZeDMD
 			var tempbuf = new byte[ZeDMDComm.N_CTRL_CHARS+1];
 			for (int ti=0;ti<ZeDMDComm.N_CTRL_CHARS;ti++) tempbuf[ti] = ZeDMDComm.CtrlCharacters[ti];
 			tempbuf[ZeDMDComm.N_CTRL_CHARS] = 10; // clear screen
-			pDMD.SendBytes(tempbuf,tempbuf.Length);
+			pDMD.StreamBytes(tempbuf,tempbuf.Length);
 		}
 
 		public void SetColor(Color color)

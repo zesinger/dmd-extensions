@@ -10,7 +10,7 @@ namespace LibDmd.Output.ZeDMD
 		public const int BaudRate = 921600;
 		public bool Opened = false;
 		private SerialPort _serialPort;
-		private const int MAX_SERIAL_WRITE_AT_ONCE = 9400;
+		private const int MAX_SERIAL_WRITE_AT_ONCE = 256;
 		public const int N_CTRL_CHARS = 6;
 		public const int N_INTERMEDIATE_CTR_CHARS = 4;
 		public static readonly byte[] CtrlCharacters = { 0x5a, 0x65, 0x64, 0x72, 0x75, 0x6d };
@@ -66,118 +66,55 @@ namespace LibDmd.Output.ZeDMD
 		{
 			if (_serialPort != null) SafeClose();
 		}
-		public bool SendBytes(byte[] pBytes, int nBytes)
-		{
-			// Send a buffer of Data in one transfer
-			if (_serialPort.IsOpen)
-			{
-				try
-				{
-					_serialPort.Write(pBytes, 0, nBytes);
-					System.Threading.Thread.Sleep(40);// 2000 / (BaudRate / (nBytes * 8)));
-													  //_serialPort.DiscardOutBuffer();
-					return true;
-				}
-				catch
-				{
-					_serialPort.DiscardInBuffer();
-					_serialPort.DiscardOutBuffer();
-				};
-			}
-			return false;
-		}
-/*		public bool StreamBytes2(byte[] pBytes, int nBytes)
-		{
-			// Send a big buffer in several transfer sending each length
-			if (_serialPort.IsOpen)
-			{
-				byte[] pBytes2 = new byte[12 + _MAX_SERIAL_WRITE_AT_ONCE]; // 4 pour la synchro + 4 pour la taille du transfert
-				int remainTrans = nBytes - 8; // la totalité - les bytes de synchro
-				try
-				{
-					// premier transfert
-					for (uint i = 0; i < 8; i++) pBytes2[i] = pBytes[i];
-					int qtetrans = Math.Min(remainTrans, _MAX_SERIAL_WRITE_AT_ONCE);
-					pBytes2[8] = (byte)(qtetrans & 0xff);
-					pBytes2[9] = (byte)((qtetrans >> 8) & 0xff);
-					pBytes2[10] = (byte)((qtetrans >> 16) & 0xff);
-					pBytes2[11] = (byte)((qtetrans >> 24) & 0xff);
-					Buffer.BlockCopy(pBytes, 8, pBytes2, 12, qtetrans);
-					_serialPort.Write(pBytes2, 0, qtetrans + 12);
-					remainTrans -= qtetrans;
-					System.Threading.Thread.Sleep(1000 / (BaudRate / ((qtetrans + 12) * 8)));
-					int ti = 1;
-					while (remainTrans > 0)
-					{
-						qtetrans = Math.Min(remainTrans, _MAX_SERIAL_WRITE_AT_ONCE);
-						pBytes2[0] = (byte)(qtetrans & 0xff);
-						pBytes2[1] = (byte)((qtetrans >> 8) & 0xff);
-						pBytes2[2] = (byte)((qtetrans >> 16) & 0xff);
-						pBytes2[3] = (byte)((qtetrans >> 24) & 0xff);
-						Buffer.BlockCopy(pBytes, 8 + ti * _MAX_SERIAL_WRITE_AT_ONCE, pBytes2, 4, qtetrans);
-						_serialPort.Write(pBytes2, 0, qtetrans + 4);
-						System.Threading.Thread.Sleep(1000 / (BaudRate / ((qtetrans + 4) * 8)));
-						remainTrans -= qtetrans;
-						ti++;
-					}
-					return true;
-				}
-				catch
-				{
-					_serialPort.DiscardInBuffer();
-					_serialPort.DiscardOutBuffer();
-					return false;
-				};
-			}
-			return false;
-		}*/
-		public bool StreamBytes(byte[] pBytes, int nBytes)
-		{
-			// Send a big buffer in several transfers to avoid corrupted data
-			if (_serialPort.IsOpen)
-			{
-				int remainTrans = nBytes; // la totalité - les bytes de synchro
-				try
-				{
-					// premier transfert
-					for (int i = 0; i < N_CTRL_CHARS; i++) pBytes2[i] = CtrlCharacters[i];
-					int qtetransf = Math.Min(MAX_SERIAL_WRITE_AT_ONCE - N_CTRL_CHARS, remainTrans);
-					Buffer.BlockCopy(pBytes, 0, pBytes2, N_CTRL_CHARS, qtetransf);
-					_serialPort.Write(pBytes2, 0, qtetransf + N_CTRL_CHARS);
-					System.Threading.Thread.Sleep(Math.Min(20, 1000 / (BaudRate / ((qtetransf + N_CTRL_CHARS) * 8))));
-					remainTrans -= qtetransf;
-					int ti = qtetransf;
-					while (remainTrans > 0)
-					{
-						for (int i = N_INTERMEDIATE_CTR_CHARS - 1; i >= 0; i--) pBytes2[N_INTERMEDIATE_CTR_CHARS - 1 - i] = CtrlCharacters[i];
-						qtetransf = Math.Min(remainTrans, MAX_SERIAL_WRITE_AT_ONCE - N_INTERMEDIATE_CTR_CHARS);
-						Buffer.BlockCopy(pBytes, ti, pBytes2, N_INTERMEDIATE_CTR_CHARS, qtetransf);
-						_serialPort.Write(pBytes2, 0, qtetransf + N_INTERMEDIATE_CTR_CHARS);
-						System.Threading.Thread.Sleep(Math.Min(20, 1000 / (BaudRate / ((qtetransf + N_INTERMEDIATE_CTR_CHARS) * 8))));
-						remainTrans -= qtetransf;
-						ti += qtetransf;
-					}
-					return true;
-				}
-				catch
-				{
-					_serialPort.DiscardInBuffer();
-					_serialPort.DiscardOutBuffer();
-					return false;
-				};
-			}
-			return false;
-		}
+        public bool StreamBytes(byte[] pBytes, int nBytes)
+        {
+            if (_serialPort.IsOpen)
+            {
+                try
+                {
+                    int signal = 0;
+                    int bytesToWrite = Math.Min(nBytes, MAX_SERIAL_WRITE_AT_ONCE - N_CTRL_CHARS);
+                    while (signal != 'R') {
+                        signal = _serialPort.ReadByte();
+                        if (signal == 'E') return false;
+                    }
+                    _serialPort.Write(CtrlCharacters, 0, N_CTRL_CHARS);
+                    _serialPort.Write(pBytes, 0, bytesToWrite);
+                    while (signal != 'A') {
+                        signal = _serialPort.ReadByte();
+                        if (signal == 'E') return false;
+                    }
+
+                    int remainingBytes = nBytes - bytesToWrite;
+                    while (remainingBytes > 0) {
+                        bytesToWrite = Math.Min(remainingBytes, MAX_SERIAL_WRITE_AT_ONCE);
+                        _serialPort.Write(pBytes, nBytes - remainingBytes, bytesToWrite);
+                        remainingBytes -= bytesToWrite;
+                        while (signal != 'A') {
+                            signal = _serialPort.ReadByte();
+                            if (signal == 'E') return false;
+                        }
+                    }
+                    return true;
+                }
+                catch
+                {
+                    if (_serialPort.IsOpen)
+                    {
+                        _serialPort.DiscardOutBuffer();
+                    }
+                    return false;
+                }
+            }
+            return false;
+        }
 		public void ResetPalettes()
 		{
 			// Reset ESP32 palette
-			byte[] tempbuffer = new byte[4];
-			tempbuffer[0] = 0x81; // frame sync bytes
-			tempbuffer[1] = 0xC3;
-			tempbuffer[2] = 0xE7;
-			tempbuffer[3] = 0x6;  // command byte 6 = reset palettes
-			SendBytes(tempbuffer, 4);
-			System.Threading.Thread.Sleep(20);
+			byte[] tempbuffer = new byte[N_CTRL_CHARS + 1];
+			for (int ti=0;ti<N_CTRL_CHARS;ti++) tempbuf[ti] = CtrlCharacters[ti];
+			tempbuf[N_CTRL_CHARS] = 0x6;  // command byte 6 = reset palettes
+			StreamBytes(tempbuffer, N_CTRL_CHARS + 1);
 		}
 		public int Open(out int width, out int height)
 		{
